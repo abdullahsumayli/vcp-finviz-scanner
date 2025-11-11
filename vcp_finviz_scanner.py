@@ -38,7 +38,10 @@ def vcp_long_score(df: pd.DataFrame) -> float:
         return 0.0
 
     # ترند صاعد بسيط
-    if closes.iloc[-1] <= closes.iloc[-40]:
+    close_now = float(closes.iloc[-1])
+    close_40 = float(closes.iloc[-40])
+    
+    if close_now <= close_40:
         return 0.0
 
     # تقسيم آخر 60 شمعة إلى 4 مقاطع لقياس تقلص التذبذب
@@ -59,7 +62,7 @@ def vcp_long_score(df: pd.DataFrame) -> float:
 
     # درجة بسيطة تعكس قوة الانكماش والترند
     contraction_strength = (avg_ranges[0] - avg_ranges[-1]) / avg_ranges[0]
-    trend_strength = (closes.iloc[-1] / closes.iloc[-40]) - 1
+    trend_strength = (close_now / close_40) - 1
     score = max(0.0, contraction_strength * 0.7 + trend_strength * 0.3)
     return float(score)
 
@@ -78,7 +81,10 @@ def vcp_short_score(df: pd.DataFrame) -> float:
         return 0.0
 
     # ترند هابط
-    if closes.iloc[-1] >= closes.iloc[-40]:
+    close_now = float(closes.iloc[-1])
+    close_40 = float(closes.iloc[-40])
+    
+    if close_now >= close_40:
         return 0.0
 
     recent = df.iloc[-60:]
@@ -98,7 +104,7 @@ def vcp_short_score(df: pd.DataFrame) -> float:
     if avg_vol[-1] > avg_vol[0] * 1.2:
         return 0.0
 
-    drop_strength = (closes.iloc[-40] / closes.iloc[-1]) - 1
+    drop_strength = (close_40 / close_now) - 1
     contraction_strength = (avg_ranges[0] - avg_ranges[-1]) / avg_ranges[0]
     score = max(0.0, contraction_strength * 0.5 + drop_strength * 0.5)
     return float(score)
@@ -116,7 +122,7 @@ def get_finviz_candidates_long():
     filters = {
         "Index": "S&P 500",                 # يمكنك تغييرها لـ: S&P 500 | S&P 400 | S&P 600 | NASDAQ 100
         "Average Volume": "Over 500K",
-        "Price": "Over 20",
+        "Price": "Over $20",
         "50-Day Simple Moving Average": "Price above SMA50",
         "200-Day Simple Moving Average": "Price above SMA200"
     }
@@ -135,7 +141,7 @@ def get_finviz_candidates_short():
     filters = {
         "Index": "S&P 500",
         "Average Volume": "Over 500K",
-        "Price": "Over 20",
+        "Price": "Over $20",
         "50-Day Simple Moving Average": "Price below SMA50",
         "200-Day Simple Moving Average": "Price below SMA200"
     }
