@@ -19,6 +19,7 @@ st.set_page_config(
 # ================ أدوات مساعدة ================
 
 def get_series(df: pd.DataFrame, col: str) -> pd.Series:
+    """يضمن أن العمود Series رقمية 1D حتى لو رجع DataFrame من yfinance."""
     s = df[col]
     if isinstance(s, pd.DataFrame):
         s = s.iloc[:, 0]
@@ -31,6 +32,10 @@ def download_history(ticker: str, days: int = LOOKBACK_DAYS):
     if data is None or data.empty:
         return None
     data = data.dropna()
+    # نضمن وجود الأعمدة
+    for c in ["Open", "High", "Low", "Close", "Volume"]:
+        if c not in data.columns:
+            return None
     if len(data) < 60:
         return None
     return data
@@ -63,11 +68,11 @@ def vcp_long_score(df: pd.DataFrame) -> float:
     chunks = np.array_split(ranges.values, 4)
     avg_ranges = [float(np.mean(c)) for c in chunks]
 
-    # تقلص تذبذب
+    # تقلص التذبذب
     if not all(avg_ranges[i] < avg_ranges[i - 1] for i in range(1, len(avg_ranges))):
         return 0.0
 
-    # تقلص فوليوم
+    # تقلص الفوليوم
     vol_chunks = np.array_split(recent_v.values, 4)
     avg_vol = [float(np.mean(c)) for c in vol_chunks]
     if not (avg_vol[-1] <= avg_vol[0] * 0.9):
@@ -158,12 +163,8 @@ def build_rows(ticker_list, mode: str):
         if hist is None:
             continue
 
-        if mode == "long":
-            s = vcp_long_score(hist)
-        else:
-            s = vcp_short_score(hist)
-
-        if s <= 0:
+        score = vcp_long_score(hist) if mode == "long" else vcp_short_score(hist)
+        if score <= 0:
             continue
 
         closes = get_series(hist, "Close")
@@ -172,25 +173,22 @@ def build_rows(ticker_list, mode: str):
 
         last = float(closes.iloc[-1])
 
-        # أداء آخر 20 يوم كنسبة
         if len(closes) >= 20:
             chg20 = (last / float(closes.iloc[-20]) - 1.0) * 100.0
         else:
             chg20 = np.nan
 
-        atr = float((get_series(hist, "High").tail(14) -
-                     get_series(hist, "Low").tail(14)).mean())
-
-        # sparkline من آخر 20 إغلاق
-        spark_data = closes.tail(20).reset_index(drop=True)
+        atr = float(
+            (get_series(hist, "High").tail(14) -
+             get_series(hist, "Low").tail(14)).mean()
+        )
 
         rows.append({
             "Ticker": t,
             "Price": round(last, 2),
-            "Score": round(s, 3),
+            "Score": round(score, 3),
             "Chg20%": round(chg20, 2) if not np.isnan(chg20) else None,
             "ATR14": round(atr, 2),
-            "Spark": spark_data,
         })
     return rows
 
@@ -210,24 +208,10 @@ def scan(max_long: int, max_short: int,
 
     return long_df, short_df
 
-# ================ تنسيق بصري ================
-
-st.markdown(
-    """
-    <style>
-    body {background-color: #0f1117;}
-    .block-container {padding-top: 1.5rem; padding-bottom: 1.5rem;}
-    .metric-label {font-size: 0.8rem;}
-    .metric-value {font-size: 1.2rem; font-weight: 600;}
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
 # ================ واجهة المستخدم ================
 
 st.title("VCP Scanner · Minervini Style")
-st.caption("مرشحات تعليمية مبنية على Stage 2 / Stage 4 + VCP تقريبي. ليست توصية استثمارية.")
+st.caption("مرشح تعليمي يعتمد على Stage 2 / Stage 4 + VCP تقريبي. ليس توصية استثمارية.")
 
 col1, col2, col3, col4 = st.columns(4)
 with col1:
@@ -249,13 +233,10 @@ with col4:
 
 min_avg_vol = "Over 500K"
 
-run = st.button("تشغيل الفلتر الآن", type="primary")
-
-if run:
-    with st.spinner("Scanning with Finviz + YF..."):
+if st.button("تشغيل الفلتر الآن", type="primary"):
+    with st.spinner("جاري الفحص..."):
         long_df, short_df = scan(max_long, max_short, index_filter, min_price, min_avg_vol)
 
-    # كروت ملخص
     m1, m2, m3, m4 = st.columns(4)
     with m1:
         st.metric("عدد مرشحي الشراء", len(long_df))
@@ -273,18 +254,11 @@ if run:
         if long_df.empty:
             st.info("لا يوجد مرشحين ضمن الشروط الحالية.")
         else:
-            # عرض جدول بدون عمود spark الخام
             st.dataframe(
                 long_df[["Ticker", "Price", "Score", "Chg20%", "ATR14"]],
                 use_container_width=True,
                 height=260,
             )
-            # سبـاركلين لأعلى 3
-            top3 = long_df.head(3)
-            st.caption("Trend snapshot لأعلى 3 Scores:")
-            for _, row in top3.iterrows():
-                st.text(f"{row['Ticker']}  | Score {row['Score']}")
-                st.line_chart(row["Spark"], height=80)
 
     with c2:
         st.subheader("مرشحي الشورت (Stage 4 + VCP معكوس)")
@@ -296,17 +270,11 @@ if run:
                 use_container_width=True,
                 height=260,
             )
-            st.caption("Trend snapshot لأعلى 3 Scores (شورت):")
-            top3s = short_df.head(3)
-            for _, row in top3s.iterrows():
-                st.text(f"{row['Ticker']}  | Score {row['Score']}")
-                st.line_chart(row["Spark"], height=80)
 
     st.markdown(
         """
-        **ملاحظات استخدام:**
-        - استخدم هذه القائمة كنقطة بداية.
-        - افتح الشارت اليومي والساعة لكل سهم.
-        - تأكد من اختراق/كسر واضح + حجم مرتفع + وقف خسارة منطقي قبل أي قرار.
+        **ملاحظات:**
+        - استخدم النتائج كنقطة بداية فقط.
+        - راقب الشارت، الاختراق/الكسر، الفوليوم، ووقف الخسارة قبل أي دخول.
         """
     )
